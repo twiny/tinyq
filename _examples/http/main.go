@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi"
-	"github.com/issmeftah/bprint"
-	"github.com/issmeftah/tinyq"
-	boltstore "github.com/issmeftah/tinyq/stores/bbolt"
+	"github.com/twiny/bprint"
+	"github.com/twiny/tinyq"
+	boltstore "github.com/twiny/tinyq/stores/bbolt"
 )
 
 var (

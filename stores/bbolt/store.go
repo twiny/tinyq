@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 
 	json "github.com/goccy/go-json"
-	"github.com/issmeftah/tinyq"
+	"github.com/twiny/tinyq"
 
 	"go.etcd.io/bbolt"
 )

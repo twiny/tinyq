@@ -2,7 +2,7 @@ package boltstore
 
 import (
 	json "github.com/goccy/go-json"
-	"github.com/issmeftah/tinyq"
+	"github.com/twiny/tinyq"
 )
 
 // encode
