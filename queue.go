@@ -179,10 +179,8 @@ func (q *Queue) Retry() error {
 }
 
 // Notify
-func (q *Queue) Notify(uuid string, merr error) {
-	if err := q.store.Notify(uuid, merr); err != nil {
-		q.errs <- err
-	}
+func (q *Queue) Notify(uuid string, merr error) error {
+	return q.store.Notify(uuid, merr)
 }
 
 // List
