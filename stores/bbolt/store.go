@@ -216,8 +216,8 @@ func (s *Store) listPending(offset, limit uint64) (tinyq.Messages, error) {
 				}
 				// break when limit reached
 				if limit == limitCount+1 {
-					// return nil
-					break
+					return nil
+					// break
 				}
 			}
 		}
@@ -270,8 +270,8 @@ func (s *Store) listFailed(offset, limit uint64) (tinyq.Messages, error) {
 
 				// break when limit reached
 				if limit == limitCount {
-					// return nil
-					break
+					return nil
+					// break
 				}
 			}
 		}
