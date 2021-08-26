@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -128,6 +129,11 @@ func main() {
 
 		b, _ := json.Marshal(astats)
 		w.Write(b)
+	})
+
+	router.Get("/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		queue.Close()
+		os.Exit(0)
 	})
 
 	srv := &http.Server{
