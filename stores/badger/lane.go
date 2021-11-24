@@ -1,4 +1,4 @@
-package boltstore
+package badgerstore
 
 import (
 	"fmt"
@@ -6,13 +6,13 @@ import (
 )
 
 // Lane
-type Lane struct {
+type lane struct {
 	mu    *sync.Mutex
 	slice []string
 }
 
 // add
-func (l *Lane) add(uuid string) {
+func (l *lane) add(uuid string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -20,12 +20,12 @@ func (l *Lane) add(uuid string) {
 }
 
 // pop
-func (l *Lane) pop() (string, error) {
+func (l *lane) pop() (string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if len(l.slice) == 0 {
-		return "", fmt.Errorf("empty queue")
+		return "", fmt.Errorf("queue is empty")
 	}
 
 	uuid := l.slice[0]
@@ -35,7 +35,7 @@ func (l *Lane) pop() (string, error) {
 }
 
 // clear
-func (l *Lane) clear() {
+func (l *lane) clear() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.slice = []string{}

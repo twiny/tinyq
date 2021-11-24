@@ -2,27 +2,29 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"runtime"
 	"sync"
 	"time"
+	"tinyq"
+
+	"tinyq/pkg/metrics"
+	boltstore "tinyq/stores/bbolt"
 
 	"github.com/go-chi/chi"
-	"github.com/twiny/bprint"
-	"github.com/twiny/tinyq"
-	boltstore "github.com/twiny/tinyq/stores/bbolt"
-)
-
-var (
-	ErrMessageFailed = errors.New("message failed")
+	"github.com/go-chi/chi/middleware"
 )
 
 func main() {
-	store, err := boltstore.NewStore("store.db")
+	// store, err := badgerstore.NewBadgerStore("_test")
+	// if err != nil {
+	// 	log.Println(err)
+	// 	return
+	// }
+
+	store, err := boltstore.NewStore("_testx")
 	if err != nil {
 		log.Println(err)
 		return
@@ -36,54 +38,71 @@ func main() {
 
 	numbers := make(chan int, 2048)
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 1; i++ {
 			numbers <- i
 		}
 		close(numbers)
 	}()
 
 	// Enqueue
-	wg.Add(20)
+	wg.Add(50)
 	start := time.Now()
-	for j := 0; j < 20; j++ {
+	for j := 0; j < 50; j++ {
 		go func() {
 			for i := range numbers {
-				queue.Enqueue(i)
-			}
-			wg.Done()
-		}()
-	}
-
-	// Dequeue
-	wg.Add(1)
-	for i := 0; i < 1; i++ {
-		go func() {
-			for msg := range queue.Dequeue() {
-				var j int
-				if err := msg.Value(&j); err != nil {
-					fmt.Println(err)
-					continue
+				if err := queue.Enqueue(i); err != nil {
+					fmt.Println(fmt.Errorf("main 1 %s", err.Error()))
+					return
 				}
-
-				if (j % 2) == 0 {
-					fmt.Println("failed", j)
-					queue.Notify(msg.UUID, ErrMessageFailed)
-					continue
-				}
-				fmt.Println("success", j)
-				queue.Notify(msg.UUID, nil)
 			}
 			wg.Done()
 		}()
 	}
 
 	go func() {
+		for err := range queue.Errs() {
+			fmt.Println(fmt.Errorf("main queue error %s", err.Error()))
+		}
+	}()
+
+	go func() {
 		wg.Wait()
 		fmt.Println(time.Since(start))
 	}()
 
+	// Dequeue
+	// wg.Add(1)
+	for i := 0; i < 10; i++ {
+		go func() {
+			for msg := range queue.Dequeue() {
+				var j int
+				if err := msg.Value(&j); err != nil {
+					fmt.Println(fmt.Errorf("queue dequeue 1 %s", err.Error()))
+					continue
+				}
+
+				if (j % 2) == 0 {
+					fmt.Println("failed", j)
+					if err := queue.Notify(msg.UUID, fmt.Errorf("message %s failed", msg.UUID)); err != nil {
+						fmt.Println(fmt.Errorf("queue dequeue 2 %s", err.Error()))
+					}
+					continue
+				}
+				fmt.Println("success", j)
+				if err := queue.Notify(msg.UUID, nil); err != nil {
+					fmt.Println(fmt.Errorf("queue dequeue 3 %s", err.Error()))
+				}
+
+				//
+				// time.Sleep(300 * time.Millisecond)
+			}
+			// wg.Done()
+		}()
+	}
+
 	// HTTP Server
 	router := chi.NewRouter()
+	router.Use(middleware.SetHeader("Content-Type", "application/json"))
 
 	router.Get("/pause", func(w http.ResponseWriter, r *http.Request) {
 		if err := queue.Exec(tinyq.Pause); err != nil {
@@ -109,25 +128,12 @@ func main() {
 			return
 		}
 
-		b, _ := json.Marshal(stats)
-		w.Write(b)
-	})
-
-	router.Get("/debug", func(w http.ResponseWriter, r *http.Request) {
-		stats := new(runtime.MemStats)
-		runtime.ReadMemStats(stats)
-
-		// app stats
-		astats := map[string]interface{}{
-			"Goroutine":   runtime.NumGoroutine(),
-			"CPUs":        runtime.NumCPU(),
-			"System":      bprint.String(stats.Sys),
-			"StackSystem": bprint.String(stats.StackSys),
-			"GCSize":      bprint.String(stats.GCSys),
-			"CompletedGC": stats.NumGC,
+		s := map[string]interface{}{
+			"queue":   stats,
+			"metrics": metrics.GetMetrics(),
 		}
 
-		b, _ := json.Marshal(astats)
+		b, _ := json.Marshal(s)
 		w.Write(b)
 	})
 

@@ -1,7 +1,8 @@
 package tinyq
 
 import (
-	json "github.com/goccy/go-json"
+	"bytes"
+	"encoding/gob"
 )
 
 // MessageStatus
@@ -31,21 +32,21 @@ type Messages struct {
 }
 
 // NewMessage
-func NewMessage(key string, data interface{}) (Message, error) {
-	body, err := json.Marshal(data)
-	if err != nil {
+func NewMessage(key string, b interface{}) (Message, error) {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(b); err != nil {
 		return Message{}, err
 	}
 
 	return Message{
 		UUID:   key,
 		Status: Pending,
-		Body:   body,
+		Body:   buf.Bytes(),
 		Detail: "",
 	}, nil
 }
 
 // Data
-func (msg Message) Value(data interface{}) error {
-	return json.Unmarshal(msg.Body, data)
+func (msg Message) Value(v interface{}) error {
+	return gob.NewDecoder(bytes.NewReader(msg.Body)).Decode(v)
 }

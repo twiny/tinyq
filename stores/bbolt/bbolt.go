@@ -1,20 +1,12 @@
 package boltstore
 
 import (
-	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
-
-	json "github.com/goccy/go-json"
-	"github.com/twiny/tinyq"
+	"tinyq"
 
 	"go.etcd.io/bbolt"
-)
-
-var (
-	ErrEmptyQueue      = errors.New("queue is empty")
-	ErrMessageNotFound = errors.New("message not found")
-	ErrUnknownType     = errors.New("unknown message type")
 )
 
 // Store
@@ -75,7 +67,7 @@ func (s *Store) requeue() error {
 
 // Enqueue
 func (s *Store) Enqueue(msg tinyq.Message) error {
-	if err := s.db.Batch(func(tx *bbolt.Tx) error {
+	return s.db.Batch(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte("pending"))
 
 		body, err := encode(msg)
@@ -83,18 +75,10 @@ func (s *Store) Enqueue(msg tinyq.Message) error {
 			return err
 		}
 
-		if err := bucket.Put([]byte(msg.UUID), body); err != nil {
-			return err
-		}
-
 		s.lane.add(msg.UUID)
 
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	return nil
+		return bucket.Put([]byte(msg.UUID), body)
+	})
 }
 
 // Dequeue
@@ -110,10 +94,11 @@ func (s *Store) Dequeue() (tinyq.Message, error) {
 
 		val := bucket.Get([]byte(uuid))
 		if val == nil {
-			return ErrMessageNotFound
+			return fmt.Errorf("message %s not found", uuid)
 		}
 
-		if err := json.Unmarshal(val, &msg); err != nil {
+		msg, err = decode(val)
+		if err != nil {
 			return err
 		}
 
@@ -121,30 +106,28 @@ func (s *Store) Dequeue() (tinyq.Message, error) {
 	}); err != nil {
 		return tinyq.Message{}, err
 	}
+
 	return msg, nil
 }
 
 // IsEmpty
-func (s *Store) IsEmpty() error {
-	if len(s.lane.slice) == 0 {
-		return ErrEmptyQueue
-	}
-	return nil
+func (s *Store) IsEmpty() bool {
+	return len(s.lane.slice) == 0
 }
 
 // Notify
 func (s *Store) Notify(uuid string, merr error) error {
-	return s.db.Update(func(tx *bbolt.Tx) error {
+	return s.db.Batch(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte("pending"))
 
 		// get message
 		val := bucket.Get([]byte(uuid))
 		if val == nil {
-			return ErrMessageNotFound
+			return fmt.Errorf("message %s not found", uuid)
 		}
 
-		var msg tinyq.Message
-		if err := decode(val, &msg); err != nil {
+		msg, err := decode(val)
+		if err != nil {
 			return err
 		}
 
@@ -174,7 +157,7 @@ func (s *Store) List(typ tinyq.MessageStatus, offset, limit uint64) (tinyq.Messa
 	case tinyq.Failed:
 		return s.listFailed(offset, limit)
 	}
-	return tinyq.Messages{}, ErrUnknownType
+	return tinyq.Messages{}, fmt.Errorf("unknown message type %d", typ)
 }
 
 // listPending
@@ -202,8 +185,8 @@ func (s *Store) listPending(offset, limit uint64) (tinyq.Messages, error) {
 		msgs.Total = totalCount
 
 		for k, v := curser.First(); k != nil; k, v = curser.Next() {
-			var msg tinyq.Message
-			if err := decode(v, &msg); err != nil {
+			msg, err := decode(v)
+			if err != nil {
 				return err
 			}
 			// increment off set
@@ -254,10 +237,11 @@ func (s *Store) listFailed(offset, limit uint64) (tinyq.Messages, error) {
 		msgs.Total = totalCount
 
 		for k, v := curser.First(); k != nil; k, v = curser.Next() {
-			var msg tinyq.Message
-			if err := decode(v, &msg); err != nil {
-				continue
+			msg, err := decode(v)
+			if err != nil {
+				return err
 			}
+
 			// increment off set
 			atomic.AddUint64(&offsetCount, 1)
 

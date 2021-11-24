@@ -1,16 +1,10 @@
 package tinyq
 
 import (
-	"errors"
+	"fmt"
 	"sync"
 
-	"github.com/rs/xid"
-)
-
-var (
-	ErrQueueIsPaused  = errors.New("queue is already paused")
-	ErrQueueIsRunning = errors.New("queue is already running")
-	ErrUnknownCommand = errors.New("unknown command")
+	"github.com/twiny/dice"
 )
 
 // State
@@ -33,7 +27,7 @@ const (
 type Store interface {
 	Enqueue(msg Message) error
 	Dequeue() (Message, error)
-	IsEmpty() error
+	IsEmpty() bool
 	Notify(uuid string, merr error) error
 	List(typ MessageStatus, offset, limit uint64) (Messages, error)
 	Retry() error
@@ -62,7 +56,7 @@ func NewQueue(store Store, autostart bool) *Queue {
 		wg:     &sync.WaitGroup{},
 		state:  running,
 		store:  store,
-		stream: make(chan Message, 1),
+		stream: make(chan Message, 10),
 		errs:   make(chan error, 1),
 		start:  make(chan struct{}, 1),
 		pause:  make(chan struct{}, 1),
@@ -108,7 +102,7 @@ func (q *Queue) routine() {
 					continue
 				}
 
-				if err := q.store.IsEmpty(); err != nil {
+				if q.store.IsEmpty() {
 					if err := q.Exec(Pause); err != nil {
 						q.errs <- err
 					}
@@ -119,7 +113,9 @@ func (q *Queue) routine() {
 				if err != nil {
 					if err := q.Exec(Pause); err != nil {
 						q.errs <- err
+						continue
 					}
+					q.errs <- fmt.Errorf("dequeue %w", err)
 					continue
 				}
 
@@ -129,6 +125,7 @@ func (q *Queue) routine() {
 	}()
 }
 
+// Exec
 func (q *Queue) Exec(cmd Command) error {
 	q.l.Lock()
 	defer q.l.Unlock()
@@ -136,14 +133,18 @@ func (q *Queue) Exec(cmd Command) error {
 	switch cmd {
 	case Start:
 		if q.state == running {
-			return ErrQueueIsRunning
+			return fmt.Errorf("queue is already running")
 		}
+		if q.store.IsEmpty() {
+			return fmt.Errorf("queue is empty")
+		}
+
 		q.start <- struct{}{}
 		q.state = running
 		return nil
 	case Pause:
 		if q.state == paused {
-			return ErrQueueIsPaused
+			return fmt.Errorf("queue is already paused")
 		}
 		q.pause <- struct{}{}
 		q.state = paused
@@ -153,14 +154,15 @@ func (q *Queue) Exec(cmd Command) error {
 		q.state = paused
 		return nil
 	default:
-		return ErrUnknownCommand
+		return fmt.Errorf("unknown command")
 	}
 }
 
 // Enqueue
-func (q *Queue) Enqueue(obj interface{}) error {
-	key := xid.New().String()
-	msg, err := NewMessage(key, obj)
+func (q *Queue) Enqueue(v interface{}) error {
+	key := dice.RandString(25)
+
+	msg, err := NewMessage(key, v)
 	if err != nil {
 		return err
 	}
