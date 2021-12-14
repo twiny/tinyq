@@ -1,6 +1,7 @@
 package tinyq
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -20,6 +21,7 @@ type Command string
 const (
 	Start Command = "start"
 	Pause Command = "pause"
+	Retry Command = "retry"
 	Stop  Command = "stop"
 )
 
@@ -27,10 +29,10 @@ const (
 type Store interface {
 	Enqueue(msg Message) error
 	Dequeue() (Message, error)
-	IsEmpty() bool
+	Retry() error
 	Notify(uuid string, merr error) error
 	List(typ MessageStatus, offset, limit uint64) (Messages, error)
-	Retry() error
+	IsEmpty() bool
 	Remove(typ MessageStatus) error
 	Statistic() (Stats, error)
 	Close()
@@ -43,30 +45,30 @@ type Queue struct {
 	state  State
 	store  Store
 	stream chan Message
-	errs   chan error
 	start  chan struct{}
 	pause  chan struct{}
-	exit   chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewQueue
 func NewQueue(store Store, autostart bool) *Queue {
+	ctx, cancel := context.WithCancel(context.Background())
 	q := &Queue{
 		l:      &sync.Mutex{},
 		wg:     &sync.WaitGroup{},
 		state:  running,
 		store:  store,
-		stream: make(chan Message, 10),
-		errs:   make(chan error, 1),
+		stream: make(chan Message, 1), // todo
 		start:  make(chan struct{}, 1),
 		pause:  make(chan struct{}, 1),
-		exit:   make(chan struct{}, 1),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
 	if !autostart {
-		if err := q.Exec(Pause); err != nil {
-			q.errs <- err
-		}
+		q.pause <- struct{}{}
+		q.state = paused
 	}
 
 	q.routine()
@@ -78,48 +80,46 @@ func NewQueue(store Store, autostart bool) *Queue {
 func (q *Queue) routine() {
 	q.wg.Add(1)
 	go func() {
+		defer func() {
+			q.wg.Done()
+			close(q.stream)
+		}()
+		//
 		for {
 			select {
 			case <-q.pause:
 				select {
 				case <-q.start:
-				case <-q.exit:
-					q.wg.Done()
-					close(q.stream)
-					close(q.exit)
+				case <-q.ctx.Done():
 					return
 				}
-			case <-q.exit:
-				q.wg.Done()
-				close(q.stream)
-				close(q.exit)
+			case <-q.ctx.Done():
 				return
 			default:
+				if q.ctx.Err() != nil {
+					return
+				}
+
 				if q.state == paused {
-					if err := q.Exec(Pause); err != nil {
-						q.errs <- err
-					}
+					q.pause <- struct{}{}
+					q.state = paused
 					continue
 				}
 
 				if q.store.IsEmpty() {
-					if err := q.Exec(Pause); err != nil {
-						q.errs <- err
-					}
+					q.pause <- struct{}{}
+					q.state = paused
 					continue
 				}
 
 				msg, err := q.store.Dequeue()
 				if err != nil {
-					if err := q.Exec(Pause); err != nil {
-						q.errs <- err
-						continue
-					}
-					q.errs <- fmt.Errorf("dequeue %w", err)
+					q.pause <- struct{}{}
+					q.state = paused
 					continue
 				}
 
-				q.stream <- msg
+				q.stream <- msg // this blocks
 			}
 		}
 	}()
@@ -139,8 +139,8 @@ func (q *Queue) Exec(cmd Command) error {
 			return fmt.Errorf("queue is empty")
 		}
 
-		q.start <- struct{}{}
 		q.state = running
+		q.start <- struct{}{}
 		return nil
 	case Pause:
 		if q.state == paused {
@@ -149,9 +149,18 @@ func (q *Queue) Exec(cmd Command) error {
 		q.pause <- struct{}{}
 		q.state = paused
 		return nil
+	case Retry:
+		return q.store.Retry()
 	case Stop:
-		q.exit <- struct{}{}
-		q.state = paused
+		if q.state == running {
+			q.pause <- struct{}{}
+			q.state = paused
+			// this should handle when queue is closed
+			// and queue is running. gracefule shutdown.
+			msg := <-q.stream
+			_ = q.Notify(msg.UUID, fmt.Errorf("queue is stopped")) // TODO: handle err
+		}
+		q.cancel()
 		return nil
 	default:
 		return fmt.Errorf("unknown command")
@@ -173,11 +182,6 @@ func (q *Queue) Enqueue(v interface{}) error {
 // Dequeue
 func (q *Queue) Dequeue() <-chan Message {
 	return q.stream
-}
-
-// Retry
-func (q *Queue) Retry() error {
-	return q.store.Retry()
 }
 
 // Notify
@@ -214,19 +218,11 @@ func (q *Queue) Statistic() (Stats, error) {
 	return stats, nil
 }
 
-// Errors
-func (q *Queue) Errs() <-chan error {
-	return q.errs
-}
-
 // Close
 func (q *Queue) Close() {
-	if err := q.Exec(Stop); err != nil {
-		q.errs <- err
-	}
-	q.wg.Wait()
+	_ = q.Exec(Stop)
 	close(q.pause)
 	close(q.start)
-	close(q.errs)
+	// q.wg.Wait()
 	q.store.Close()
 }

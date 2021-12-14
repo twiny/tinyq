@@ -3,7 +3,8 @@ package boltstore
 import (
 	"bytes"
 	"encoding/gob"
-	"tinyq"
+
+	"github.com/twiny/tinyq"
 )
 
 // encode

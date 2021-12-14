@@ -3,6 +3,11 @@ package tinyq
 import (
 	"bytes"
 	"encoding/gob"
+	"time"
+)
+
+const (
+	timeFormat = "02-Jan-2006 15:04:05"
 )
 
 // MessageStatus
@@ -16,10 +21,11 @@ const (
 
 // Message
 type Message struct {
-	UUID   string        `json:"uuid"`
-	Status MessageStatus `json:"status"`
-	Body   []byte        `json:"body"`
-	Detail string        `json:"detail"`
+	UUID      string        `json:"uuid"`
+	Status    MessageStatus `json:"status"`
+	Body      []byte        `json:"body"`
+	Detail    string        `json:"detail"`
+	Timestamp string        `json:"timestamp"`
 }
 
 // Messages
@@ -39,10 +45,11 @@ func NewMessage(key string, b interface{}) (Message, error) {
 	}
 
 	return Message{
-		UUID:   key,
-		Status: Pending,
-		Body:   buf.Bytes(),
-		Detail: "",
+		UUID:      key,
+		Status:    Pending,
+		Body:      buf.Bytes(),
+		Detail:    "",
+		Timestamp: time.Now().Format(timeFormat),
 	}, nil
 }
 

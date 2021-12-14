@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"tinyq"
 
+	"github.com/twiny/tinyq"
 	"go.etcd.io/bbolt"
 )
 
@@ -157,7 +157,7 @@ func (s *Store) List(typ tinyq.MessageStatus, offset, limit uint64) (tinyq.Messa
 	case tinyq.Failed:
 		return s.listFailed(offset, limit)
 	}
-	return tinyq.Messages{}, fmt.Errorf("unknown message type %d", typ)
+	return tinyq.Messages{}, fmt.Errorf("unknown message type %s", typ)
 }
 
 // listPending
